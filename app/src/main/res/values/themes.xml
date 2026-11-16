@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Material 3 主题基座。
+      · DayNight：跟随系统深浅色（原先是硬编码 Light）；
+      · 颜色角色留在这里当兜底，Android 12+ 由 DynamicColors 用系统取色覆盖。
+    -->
+    <style name="Theme.RvcM3" parent="Theme.Material3.DayNight">
+        <item name="colorPrimary">@color/m3_primary</item>
+        <item name="colorOnPrimary">@color/m3_on_primary</item>
+        <item name="colorPrimaryContainer">@color/m3_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/m3_on_primary_container</item>
+        <item name="colorSecondary">@color/m3_secondary</item>
+    </style>
+
+    <!-- 录音模式页：同一套主题，独立入口 -->
+    <style name="Theme.RvcM3.Record" parent="Theme.RvcM3" />
+</resources>

@@ -1,0 +1,42 @@
+# Gradle / Android 构建产物
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+
+# 本机 MNN 源码 checkout（只用于编译，不进仓库）
+MNN/
+
+# native/ 下的调试可执行文件（保留 .cpp 源码）
+native/mnn_run
+native/mnn_run_qnn
+native/mnn_serve
+native/rvc_mnn
+native/rvc_mnn_27
+native/rvc_mnn_ndk
+native/rvc_mnn_nolm
+native/rvc_mnn_off
+native/rvc_mnn_vk
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 大模型：GitHub 单文件上限 100MB，RVC 权重不进仓库
+app/src/main/assets/models/*.mnn
+app/src/main/assets/models/*.onnx
+app/src/main/assets/models/*.bin
+
+# 临时文件
+*.log
+*.bak
+.acc_backup

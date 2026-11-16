@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- M3 种子色（Android 12+ 会被 Monet 动态取色覆盖） -->
+    <color name="rvc_seed">#6750A4</color>
+    <color name="m3_primary">#6750A4</color>
+    <color name="m3_on_primary">#FFFFFF</color>
+    <color name="m3_primary_container">#EADDFF</color>
+    <color name="m3_on_primary_container">#21005D</color>
+    <color name="m3_secondary">#625B71</color>
+</resources>

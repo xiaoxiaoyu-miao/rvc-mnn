@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <!-- 前台服务 + 后台保活 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- App 内录屏（MediaProjection）需要的前台服务类型 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+
+    <uses-feature android:name="android.hardware.vulkan.version" android:required="false"/>
+
+    <application
+        android:name=".RvcApp"
+        android:label="RVC-MNN"
+        android:requestLegacyExternalStorage="true"
+        android:theme="@style/Theme.RvcM3">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- 录音模式：录完即停 · 不实时 · 不外放 -->
+        <activity
+            android:name=".RecordActivity"
+            android:exported="false"
+            android:label="录音模式"
+            android:theme="@style/Theme.RvcM3.Record"
+            android:windowSoftInputMode="adjustResize"/>
+
+        <!-- 实时变声前台服务：退到后台/息屏也能持续工作 -->
+        <service
+            android:name=".RealtimeService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback|mediaProjection"/>
+    </application>
+</manifest>
