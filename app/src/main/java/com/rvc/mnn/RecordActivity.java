@@ -45,7 +45,8 @@ import java.util.Locale;
  *       这段期间**不做任何推理**，也**不创建 AudioTrack**，手机一声不吭。</li>
  *   <li>点「停止并变声」→ 录音结束，WAV 封口，
  *       然后才把整段音频丢给 {@link OfflineConvert} 做一次离线变声（RVC 推理）。</li>
- *   <li>产出 {@code *_rvc_*.wav}；可以直接转成 SILK 语音，
+ *   <li>推理完再走两级后处理：{@link DeepFilter}（DFN3 降噪）→ {@link Diffusion}（精修，模型待接入）。</li>
+ *   <li>产出 {@code *_rvc_*_dn*.wav}；可以直接转成 SILK 语音，
  *       或用 root/Shizuku 写进 QQ 语音草稿。</li>
  * </ol>
  *
@@ -81,6 +82,9 @@ public class RecordActivity extends AppCompatActivity {
     private Button btnPick;
     private Button btnConvert;
     private Button btnAutoSend;
+    private Button btnDenoise;
+    private Button btnDiffusion;
+    private Button btnDiffSteps;
     private Button btnWarm;
     private Button btnSilk;
     private Button btnDraft;
@@ -102,6 +106,10 @@ public class RecordActivity extends AppCompatActivity {
     private long recStartMs;
     /** 转换完是否自动转 SILK + 写进 QQ 语音草稿。 */
     private boolean autoSend = true;
+    /** 离线变声后是否再跑 DFN3 神经网络降噪。 */
+    private boolean denoise = true;
+    /** 降噪后是否再跑 Diffusion 精修（模型暂未内置）。 */
+    private boolean diffusion = false;
 
     private int bitrate = 16000;
 
@@ -111,6 +119,8 @@ public class RecordActivity extends AppCompatActivity {
         super.onCreate(state);
         cfg = new Config();
         cfg.load(this);
+        denoise = cfg.denoise;
+        diffusion = cfg.diffusion;
         buildUi();
         RvcLog.setSink(s -> ui.post(() -> appendLog(s)));
         prepareEngineAsync();
@@ -135,6 +145,19 @@ public class RecordActivity extends AppCompatActivity {
         if (in == null || in.isEmpty()) return;
         final File f = new File(in);
         final boolean auto = it.getBooleanExtra("auto", false);
+        // 自动化/测试用：--ez dn false 关降噪，--ez send false 不自动写 QQ 草稿
+        if (it.hasExtra("dn")) {
+            denoise = it.getBooleanExtra("dn", denoise);
+            cfg.denoise = denoise;
+            ui.post(this::updateButtons);
+        }
+        if (it.hasExtra("send")) {
+            autoSend = it.getBooleanExtra("send", autoSend);
+        }
+        if (it.hasExtra("diff")) {
+            diffusion = it.getBooleanExtra("diff", diffusion);
+            cfg.diffusion = diffusion;
+        }
         ui.postDelayed(() -> importFromPath(f, auto), 400);
     }
 
@@ -204,6 +227,7 @@ public class RecordActivity extends AppCompatActivity {
         header(root, "录音模式 · 录完即停 / 不实时 / 不外放");
         root.addView(label("按「开始录音」→ 说完整段 → 按「停止并变声」。"
                 + "\n录音期间不做推理、不建 AudioTrack，手机全程不出声。"
+                + "\n变声链路：RVC 推理 → DFN3 降噪 → Diffusion 精修（模型待接入）。"
                 + "\n不想录？下面可以直接挑一段现成的音频文件来变声。"));
         root.addView(label("采样率 " + SR + " Hz · 单声道 · 16-bit · 上限 "
                 + (int) MAX_SECONDS + " 秒"));
@@ -225,6 +249,44 @@ public class RecordActivity extends AppCompatActivity {
         btnToggle = mkButton("开始录音", v -> onToggle());
         root.addView(btnToggle, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        btnDenoise = mkButton(denoiseLabel(), v -> {
+            denoise = !denoise;
+            cfg.denoise = denoise;
+            cfg.save(this);
+            ((Button) v).setText(denoiseLabel());
+        });
+        btnDiffusion = mkButton(diffusionLabel(), v -> {
+            diffusion = !diffusion;
+            cfg.diffusion = diffusion;
+            cfg.save(this);
+            ((Button) v).setText(diffusionLabel());
+            if (diffusion && !Diffusion.isAvailable(cfg)) {
+                toast("还没找到 Diffusion 模型，转换时会自动跳过");
+            }
+        });
+        btnDiffSteps = mkButton(diffStepsLabel(), v -> {
+            int[] all = {8, 20, 30};
+            int idx = 0;
+            for (int i = 0; i < all.length; i++) if (all[i] == cfg.diffusionSteps) idx = i;
+            cfg.diffusionSteps = all[(idx + 1) % all.length];
+            cfg.save(this);
+            ((Button) v).setText(diffStepsLabel());
+        });
+        LinearLayout rowFx = new LinearLayout(this);
+        rowFx.setOrientation(LinearLayout.HORIZONTAL);
+        rowFx.addView(btnDenoise, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        rowFx.addView(btnDiffusion, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        root.addView(rowFx);
+        root.addView(btnDiffSteps, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(label("处理顺序：RVC 推理 → DFN3 降噪 → SGMSE+ Diffusion 精修。"
+                + "\nDFN3 模型内置（48 kHz / 960 FFT / 32 ERB），处理的是变声后的音频；"
+                + "\nSGMSE+ 是 16 kHz 复数谱扩散（" + cfg.diffusionSteps + " 步，很慢），"
+                + "只替换 0~8 kHz，高频仍保留 RVC 原输出。"
+                + "\n把 " + cfg.diffusionModel + "（约 262 MB）放到 /sdcard/models/mm 即可启用。"));
 
         header(root, "或者：用现成的音频文件");
         root.addView(label("挑一段已经存在的语音（wav / mp3 / m4a / aac / amr / flac…），"
@@ -299,12 +361,27 @@ public class RecordActivity extends AppCompatActivity {
         return autoSend ? "转换后直接发 QQ：开" : "转换后直接发 QQ：关";
     }
 
+    private String denoiseLabel() {
+        return denoise ? "推理后降噪 DFN3：开" : "推理后降噪 DFN3：关";
+    }
+
+    private String diffusionLabel() {
+        return diffusion ? "Diffusion 精修：开" : "Diffusion 精修：关";
+    }
+
+    private String diffStepsLabel() {
+        return "Diffusion 采样步数：" + cfg.diffusionSteps + "（8 快 / 20 均衡 / 30 高质量）";
+    }
+
     private void updateButtons() {
         boolean busy = state == ST_RECORDING || state == ST_CONVERTING;
         btnToggle.setEnabled(!busy || state == ST_RECORDING);
         btnToggle.setText(state == ST_RECORDING ? "停止并变声" : "开始录音");
         btnPick.setEnabled(!busy);
         btnConvert.setEnabled(!busy && srcWav != null && srcWav.isFile());
+        if (btnDenoise != null) btnDenoise.setEnabled(!busy);
+        if (btnDiffusion != null) btnDiffusion.setEnabled(!busy);
+        if (btnDiffSteps != null) btnDiffSteps.setEnabled(!busy);
         btnWarm.setEnabled(!busy);
         boolean ready = state == ST_READY && rvcWav != null && rvcWav.isFile();
         btnSilk.setEnabled(ready && !busy);
@@ -580,10 +657,71 @@ public class RecordActivity extends AppCompatActivity {
                 String name = inWav.getName();
                 int dot = name.lastIndexOf('.');
                 String base = dot > 0 ? name.substring(0, dot) : name;
-                File out = new File(outDir(), base + "_rvc_" + cfg.voiceTag() + ".wav");
+                String stem = base + "_rvc_" + cfg.voiceTag();
+                File rvcOut = new File(outDir(), stem + ".wav");
+
+                // ① RVC 推理（16k 入 → 40/48k 出）
                 double sec = OfflineConvert.convert(engine, cfg, inWav.getAbsolutePath(),
-                        out.getAbsolutePath(), this::log);
-                final File f = out;
+                        rvcOut.getAbsolutePath(), this::log);
+                File finalWav = rvcOut;
+                ui.post(() -> setStatus("推理完成"));
+
+                // ② 推理后降噪：直接处理 RVC 输出，保持合成器的采样率（40/48k）。
+                if (denoise) {
+                    ui.post(() -> setStatus("推理完成，DFN3 降噪中…"));
+                    try {
+                        DeepFilter.ensure(this);
+                        File dn = new File(outDir(), stem + "_dn.wav");
+                        DeepFilter.denoiseWav(this, rvcOut.getAbsolutePath(),
+                                dn.getAbsolutePath(), RvcDsp.SR_OUT,
+                                new DeepFilter.Progress() {
+                                    private int last = -10;
+
+                                    @Override
+                                    public void onProgress(int p) {
+                                        if (p < last + 5 && p < 100) return;
+                                        last = p;
+                                        ui.post(() -> setStatus("DFN3 降噪中 " + p + "%"));
+                                    }
+                                });
+                        finalWav = dn;
+                        final File dnF = dn;
+                        ui.post(() -> {
+                            setStatus("降噪完成");
+                            log("降噪输出 -> " + dnF.getAbsolutePath());
+                        });
+                    } catch (Throwable t) {
+                        log("DFN 降噪失败，保留推理结果：" + t);
+                        ui.post(() -> setStatus("降噪失败，保留推理结果"));
+                    }
+                }
+
+                // ③ Diffusion 精修（模型暂未内置；找不到就跳过）
+                if (diffusion) {
+                    if (!Diffusion.isAvailable(cfg)) {
+                        log("Diffusion 模型未找到，跳过：" + Diffusion.describe(cfg));
+                        ui.post(() -> setStatus("未找到 Diffusion 模型，跳过精修"));
+                    } else {
+                        ui.post(() -> setStatus("Diffusion 精修中…"));
+                        try {
+                            File df = new File(outDir(), stem + "_diff.wav");
+                            Diffusion.refine(this, cfg, finalWav.getAbsolutePath(),
+                                    df.getAbsolutePath(), p -> ui.post(
+                                            () -> setStatus("Diffusion 精修中 " + p + "%")));
+                            finalWav = df;
+                            final File dfF = df;
+                            ui.post(() -> {
+                                setStatus("Diffusion 精修完成");
+                                log("Diffusion 输出 -> " + dfF.getAbsolutePath());
+                            });
+                        } catch (Throwable t) {
+                            log("Diffusion 失败，保留上一步结果：" + t);
+                            ui.post(() -> setStatus("Diffusion 失败，保留上一步结果"));
+                        }
+                    }
+                }
+
+                final File f = finalWav;
                 ui.post(() -> {
                     rvcWav = f;
                     silkFile = null;

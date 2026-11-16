@@ -62,6 +62,24 @@ public class Config {
     public float gate = 0.0005f;       // 输入静音门限 RMS（低于它就按静音处理）
 
     /**
+     * 录音模式是否在 RVC 推理之后跑一遍 DeepFilterNet3 神经网络降噪。
+     * 模型内置在 assets/dfn/，不依赖 modelDir；失败时自动跳过、不影响变声。
+     */
+    public boolean denoise = true;
+
+    /**
+     * 是否在「推理 → 降噪」之后再跑一段 Diffusion 精修。
+     * 目前接的是 SGMSE+（16 kHz）；模型文件不内置，默认关。
+     */
+    public boolean diffusion = false;
+    /** Diffusion ONNX 路径；相对路径按 {@link #modelDir} 解析，找不到再试 /sdcard/models/mm。 */
+    public String diffusionModel = "sgmse.onnx";
+    /** SGMSE+ 采样步数：8=Fast，20=Balanced，30=Quality。 */
+    public int diffusionSteps = 8;
+    /** 保留 RVC 输出的高频（Diffusion 只替换 0~8 kHz 语音带）。 */
+    public boolean diffusionKeepHigh = true;
+
+    /**
      * 实时模式的输出**反馈抑制门限**（dB，0=关闭，60=最狠）。
      * 逐帧自适应门控：合成后能量低于门限就衰减，切断"扬声器→麦克风→再合成"的循环尾巴，
      * 对应 MeowRVC 的 noiseGateDb + adaptiveNoiseGate。
@@ -181,7 +199,12 @@ public class Config {
                 .putFloat("pitchSemi", pitchSemi)
                 .putFloat("gain", gain)
                 .putFloat("gate", gate)
-                                                                .putFloat("feedbackGateDb", feedbackGateDb)
+                .putBoolean("denoise", denoise)
+                .putBoolean("diffusion", diffusion)
+                .putString("diffusionModel", diffusionModel)
+                .putInt("diffusionSteps", diffusionSteps)
+                .putBoolean("diffusionKeepHigh", diffusionKeepHigh)
+                .putFloat("feedbackGateDb", feedbackGateDb)
                 .putInt("numThreads", numThreads)
                 .putInt("outputMode", outputMode)
                 .putBoolean("captureFriendly", captureFriendly)
@@ -203,6 +226,13 @@ public class Config {
         pitchSemi = p.getFloat("pitchSemi", pitchSemi);
         gain = p.getFloat("gain", gain);
         gate = p.getFloat("gate", gate);
+        denoise = p.getBoolean("denoise", denoise);
+        diffusion = p.getBoolean("diffusion", diffusion);
+        diffusionModel = p.getString("diffusionModel", diffusionModel);
+        // 旧版本的占位默认值，迁移到实际的 SGMSE+ 模型名
+        if ("diffusion.onnx".equals(diffusionModel)) diffusionModel = "sgmse.onnx";
+        diffusionSteps = p.getInt("diffusionSteps", diffusionSteps);
+        diffusionKeepHigh = p.getBoolean("diffusionKeepHigh", diffusionKeepHigh);
         feedbackGateDb = p.getFloat("feedbackGateDb", feedbackGateDb);
         // 兼容旧配置：老版本只有 speakerphone 布尔
         int legacyOut = p.getBoolean("speakerphone", true) ? OUT_SPEAKER : OUT_EARPIECE;
@@ -225,6 +255,7 @@ public class Config {
         feedbackGateDb = Math.max(0f, Math.min(60f, feedbackGateDb));
         outputMode = clampOutputMode(outputMode);
         numThreads = Math.max(0, Math.min(8, numThreads));
+        if (diffusionSteps != 20 && diffusionSteps != 30) diffusionSteps = 8;
     }
 
     public JSONObject toJson() {
@@ -240,6 +271,11 @@ public class Config {
             o.put("pitchSemi", pitchSemi);
             o.put("gain", gain);
             o.put("gate", gate);
+            o.put("denoise", denoise);
+            o.put("diffusion", diffusion);
+            o.put("diffusionModel", diffusionModel);
+            o.put("diffusionSteps", diffusionSteps);
+            o.put("diffusionKeepHigh", diffusionKeepHigh);
             o.put("feedbackGateDb", feedbackGateDb);
             o.put("numThreads", numThreads);
             o.put("outputMode", outputMode);
@@ -266,6 +302,11 @@ public class Config {
         pitchSemi = (float) o.optDouble("pitchSemi", pitchSemi);
         gain = (float) o.optDouble("gain", gain);
         gate = (float) o.optDouble("gate", gate);
+        denoise = o.optBoolean("denoise", denoise);
+        diffusion = o.optBoolean("diffusion", diffusion);
+        diffusionModel = o.optString("diffusionModel", diffusionModel);
+        diffusionSteps = o.optInt("diffusionSteps", diffusionSteps);
+        diffusionKeepHigh = o.optBoolean("diffusionKeepHigh", diffusionKeepHigh);
         feedbackGateDb = (float) o.optDouble("feedbackGateDb", feedbackGateDb);
         numThreads = o.optInt("numThreads", numThreads);
         outputMode = o.optInt("outputMode", o.optBoolean("speakerphone", true) ? OUT_SPEAKER : OUT_EARPIECE);

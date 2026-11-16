@@ -26,3 +26,6 @@
 | `ct_static.mnn` | RVC 合成器（静态 49 帧） | ~105 MB |
 | `fcpe_audio.onnx` | f0 提取 | ~43 MB |
 | `emb_pitch.bin` | 音高编码查找表 | ~192 KB |
+
+DFN3 降噪模型不走这里：它内置在 `app/src/main/assets/dfn/`。
+SGMSE+ Diffusion 模型默认找 `<模型目录>/sgmse.onnx`（约 262 MB，生成方法见 `tools/sgmse/README.md`）。

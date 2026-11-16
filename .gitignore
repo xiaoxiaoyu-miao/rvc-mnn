@@ -35,6 +35,8 @@ __pycache__/
 app/src/main/assets/models/*.mnn
 app/src/main/assets/models/*.onnx
 app/src/main/assets/models/*.bin
+# DFN 降噪模型体积小，仍然提交
+!app/src/main/assets/dfn/*
 
 # 临时文件
 *.log

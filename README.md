@@ -13,9 +13,10 @@ hubert + 合成器走 **MNN（Vulkan/CPU）**，f0 提取走 **ONNX Runtime（fc
 
 首次启动会申请「所有文件访问权限」，模型放在 `/sdcard/models/mm/`。
 
-> 仓库只带源码和 `silkq.aar`。RVC 的四个权重（`hubert_fp16.mnn` 181 MB、`ct_static.mnn` 105 MB、
+> 仓库只带源码和 DFN 降噪模型。RVC 的四个权重（`hubert_fp16.mnn` 181 MB、`ct_static.mnn` 105 MB、
 > `fcpe_audio.onnx` 43 MB、`emb_pitch.bin`）超过 GitHub 单文件限制，没有放进仓库：
 > 要么放到 `/sdcard/models/mm/`（App 优先用这个目录），要么放进 `app/src/main/assets/models/` 随 APK 打包。
+> Diffusion 模型同样没有内置，见录音模式一节。
 
 ## 功能
 
@@ -26,7 +27,7 @@ hubert + 合成器走 **MNN（Vulkan/CPU）**，f0 提取走 **ONNX Runtime（fc
 | ③ WAV 转换 | 可选音频文件（SAF 自动拷到 Download）、自动生成输出名、离线转换、试听结果。 |
 | ④ 实时变声 | 低延迟流水线（采集 → hubert+fcpe → 合成 → 播放）。**回环/自激专门处理**：进通话音频模式让系统 AEC 真正工作、输出标成语音通信用途、逐帧自适应反馈抑制门控切断"扬声器→麦克风→再合成"的循环，队列只保留最新块（不越播越旧）。输出路由三选一：**外放 / 听筒 / 不外放**；可把输出录成 wav。 |
 | ⑤ 录屏 | **App 内录屏**：屏幕 H.264 + 实时变声音轨 AAC 合成 mp4。因为声音直接取自实时管线、根本不经过扬声器，所以能做到**手机不出声、视频里有声音**。 |
-| ⑥ 录音模式 | 独立的「录完即停 · 不实时 · 不外放」页面：录音**或直接挑一个现成音频文件** → 离线变声 → 转 SILK → 用 root/Shizuku 写进 QQ 语音草稿（可一键串到底）。见下方专节。 |
+| ⑥ 录音模式 | 独立的「录完即停 · 不实时 · 不外放」页面：录音**或直接挑一个现成音频文件** → RVC 离线推理 → DFN3 降噪 → SGMSE+ Diffusion 精修 → 转 SILK → 用 root/Shizuku 写进 QQ 语音草稿（可一键串到底）。见下方专节。 |
 | 日志 | 屏幕日志 + `/sdcard/Download/rvc_progress.log`，支持清空/导出。 |
 
 所有配置（模型路径、预设、变调、增益、门限、反馈抑制、输出路由、录屏捕获开关、输入输出路径）都写在 SharedPreferences
@@ -54,14 +55,45 @@ hubert + 合成器走 **MNN（Vulkan/CPU）**，f0 提取走 **ONNX Runtime（fc
 产物处理：`转 SILK`（码率可切）→ `写 QQ 草稿`（root/Shizuku 覆写 QQ 的 ptt/*.slk）。
 
 **转换后直接发 QQ（默认开）**：选完文件就自动跑完
-`导入 → 离线变声 → SILK @16k → 覆写最近一条 QQ 语音草稿`，
+`导入 → RVC 推理 → DFN3 降噪 → SGMSE+（有模型才跑）→ SILK @16k → 覆写最近一条 QQ 语音草稿`，
 最后弹一个「去 QQ」按钮跳过去——只剩在 QQ 里按一下发送。
 QQ 的"发送"动作在它自己进程里，没有公开接口，所以能自动到"草稿已就绪"这一步。
+
+### 推理后处理：DFN3 降噪 → SGMSE+ Diffusion
+
+降噪**不是在推理前**，而是接在 RVC 输出后面：
+
+```
+录音/导入 → OfflineConvert（16k 入，40/48k 出） → DeepFilterNet3 → SGMSE+ → SILK/QQ
+```
+
+- **DFN3 降噪**（`DeepFilter.java`）：官方 DeepFilterNet3 v0.5.6 的 ONNX 神经图，模型内置在
+  `assets/dfn/`，不占外置模型目录。STFT 960/480、Vorbis 窗、32 个 ERB 带、order=5 的深层滤波
+  全部在 Java 里实现（960 点混合基 FFT，不依赖 FFTW）。RVC 输出是什么采样率就还回什么采样率
+  （本机合成器 40 kHz），不会再压成 16 kHz。失败会自动跳过，保留推理结果。
+- **SGMSE+ 精修**（`Sgmse.java` / `Diffusion.java`）：链路最后一段，默认**关**。这是 16 kHz
+  复数 STFT 域扩散（65M 参数，OUVE predictor-corrector），Java 里实现了
+  `n_fft=510 / hop=128` 的 STFT、reflect padding、8/20/30 步采样和分块重叠拼接。
+  - 模型不随 APK 分发（约 262 MB）。把 `sgmse.onnx` 放到 `/sdcard/models/mm/`，
+    或把 `Config.diffusionModel` 改成绝对路径；找不到模型时自动跳过。
+  - 生成方法见 `tools/sgmse/README.md`：从 hf-mirror 拉官方 checkpoint，用 PyTorch 权重直接
+    生成 ONNX（不依赖 Python `onnx`，序列化用 `rvc-onnx-web` 的 `onnx-serializer`）。
+  - 采样率固定 16 kHz：先把 RVC 输出降到 16k，增强后再升回原采样率，并用
+    `orig + lowpass(enh - orig)` 保留 RVC 的高频（`diffusionKeepHigh`）。
+  - **很慢**：默认 8 步（Fast）在手机上每 2 秒音频约 1 分钟量级；20/30 步更慢。只建议离线
+    处理短语音，默认关。
+
+> DFN3 模型来自 [Rikorose/DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) v0.5.6
+> （MIT OR Apache-2.0），ONNX 导出、哈希与数值校验见 `docs/dfn/export_manifest.json`。
+> SGMSE+ 来自 [sp-uhh/sgmse](https://github.com/sp-uhh/sgmse)（MIT），权重由
+> [speechbrain/sgmse-voicebank](https://hf-mirror.com/speechbrain/sgmse-voicebank) 提供。
 
 命令行（有 root 时跑得通，方便批量/自动化）：
 
 ```bash
 adb shell su -c 'am start -n com.rvc.mnn/.RecordActivity --es in /sdcard/Download/a.mp3 --ez auto true'
+# 关降噪 / 不自动写 QQ / 开 SGMSE+：
+#   --ez dn false  --ez send false  --ez diff true
 ```
 
 ## 「说两个字轻轻顿一下」：块间接缝
@@ -225,13 +257,19 @@ NEON：MNN arm64 默认启用，库内可见 KleidiAI 的 `neon_dotprod` / `neon
 ## 文件
 
 - `app/src/main/java/com/rvc/mnn/MainActivity.java` — UI、实时启动、WAV IO、配置联动（③ 的转换调用 `OfflineConvert`）
-- `app/src/main/java/com/rvc/mnn/RecordActivity.java` — 录音模式：录音 / 选文件 → 离线变声 → SILK → 写 QQ 草稿
+- `app/src/main/java/com/rvc/mnn/RecordActivity.java` — 录音模式：录音 / 选文件 → RVC 推理 → DFN3 降噪 → SGMSE+ → SILK → 写 QQ 草稿
+- `app/src/main/java/com/rvc/mnn/DeepFilter.java` — DeepFilterNet3 降噪：ONNX 神经图 + STFT/ERB/深层滤波/重采样
+- `app/src/main/java/com/rvc/mnn/Sgmse.java` — SGMSE+ 16k 复数 STFT 扩散采样器
+- `app/src/main/java/com/rvc/mnn/Diffusion.java` — Diffusion 阶段的采样率转换/高频保留/模型查找
 - `app/src/main/java/com/rvc/mnn/RvcStitch.java` — 块间接缝：重叠窗口 + 交叉淡化（实时与离线共用）
 - `app/src/main/java/com/rvc/mnn/AudioImport.java` — 任意音频文件 → 单声道 WAV（MediaExtractor + MediaCodec）
 - `app/src/main/java/com/rvc/mnn/OfflineConvert.java` — 离线整段变声（③ 文件转换与录音模式共用）
 - `app/src/main/java/com/rvc/mnn/ScreenRecorder.java` — App 内录屏：MediaProjection + H.264/AAC + MediaMuxer
 - `app/src/main/java/com/rvc/mnn/Config.java` — 预设表 + SharedPreferences/JSON 持久化
 - `app/src/main/cpp/rvc_jni.cpp` — MNN JNI：`init(paths, vulkan, hubPrec, ctPrec)`、`hubert`、`synth`、`audioLen`、`backendInfo`、`release`（配置变化时自动重建 session）
+- `app/src/main/assets/dfn/` — 内置 DeepFilterNet3 ONNX 模型与 ERB/Vorbis 常量（约 8.7 MB）
+- `docs/dfn/` — DFN3 模型卡、config 与导出校验清单（来源与哈希）
+- `tools/sgmse/` — SGMSE+ 权重 → ONNX 的生成脚本与说明（模型 262 MB，不进仓库）
 
 ## 命令行入口（可选）
 
@@ -240,7 +278,7 @@ NEON：MNN arm64 默认启用，库内可见 KleidiAI 的 `neon_dotprod` / `neon
 adb shell am start -n com.rvc.mnn/.MainActivity \
   --es in /sdcard/Download/a.wav --es out /sdcard/Download/a_rvc.wav --ez auto true
 
-# ⑥ 录音模式：把外部音频喂进「导入 → 变声 → SILK → 写 QQ 草稿」整条链
+# ⑥ 录音模式：把外部音频喂进「导入 → RVC 推理 → DFN3 降噪 → SGMSE+ → SILK → 写 QQ 草稿」整条链
 adb shell su -c 'am start -n com.rvc.mnn/.RecordActivity --es in /sdcard/Download/a.mp3 --ez auto true'
 ```
 
